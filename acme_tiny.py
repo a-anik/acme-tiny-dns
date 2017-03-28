@@ -12,7 +12,7 @@ LOGGER = logging.getLogger(__name__)
 LOGGER.addHandler(logging.StreamHandler())
 LOGGER.setLevel(logging.INFO)
 
-def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
+def get_crt(account_key, csr, dns_hook, log=LOGGER, CA=DEFAULT_CA):
     # helper function base64 encode for jose spec
     def _b64(b):
         return base64.urlsafe_b64encode(b).decode('utf8').replace("=", "")
@@ -104,23 +104,17 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
             raise ValueError("Error requesting challenges: {0} {1}".format(code, result))
 
         # make the challenge file
-        challenge = [c for c in json.loads(result.decode('utf8'))['challenges'] if c['type'] == "http-01"][0]
+        challenge = [c for c in json.loads(result.decode('utf8'))['challenges'] if c['type'] == "dns-01"][0]
         token = re.sub(r"[^A-Za-z0-9_\-]", "_", challenge['token'])
         keyauthorization = "{0}.{1}".format(token, thumbprint)
-        wellknown_path = os.path.join(acme_dir, token)
-        with open(wellknown_path, "w") as wellknown_file:
-            wellknown_file.write(keyauthorization)
+        record = _b64(hashlib.sha256(keyauthorization.encode('utf8')).digest())
 
-        # check that the file is in place
-        wellknown_url = "http://{0}/.well-known/acme-challenge/{1}".format(domain, token)
-        try:
-            resp = urlopen(wellknown_url)
-            resp_data = resp.read().decode('utf8').strip()
-            assert resp_data == keyauthorization
-        except (IOError, AssertionError):
-            os.remove(wellknown_path)
-            raise ValueError("Wrote file to {0}, but couldn't download {1}".format(
-                wellknown_path, wellknown_url))
+        # update dns
+        proc = subprocess.run([dns_hook, "setup", domain, record], stderr=subprocess.PIPE)
+        if proc.returncode != 0:
+            raise IOError("dns_hook Error: {0}".format(proc.stderr))
+
+        # TODO check dns
 
         # notify challenge are met
         code, result = _send_signed_request(challenge['uri'], {
@@ -142,7 +136,10 @@ def get_crt(account_key, csr, acme_dir, log=LOGGER, CA=DEFAULT_CA):
                 time.sleep(2)
             elif challenge_status['status'] == "valid":
                 log.info("{0} verified!".format(domain))
-                os.remove(wellknown_path)
+                # remove dns
+                proc = subprocess.run([dns_hook, "teardown", domain], stderr=subprocess.PIPE)
+                if proc.returncode != 0:
+                    raise IOError("dns_hook Error: {0}".format(proc.stderr))
                 break
             else:
                 raise ValueError("{0} challenge did not pass: {1}".format(
@@ -175,23 +172,23 @@ def main(argv):
             only ~200 lines, so it won't take long.
 
             ===Example Usage===
-            python acme_tiny.py --account-key ./account.key --csr ./domain.csr --acme-dir /usr/share/nginx/html/.well-known/acme-challenge/ > signed.crt
+            python acme_tiny.py --account-key ./account.key --csr ./domain.csr --dns-hook ./nsupdate_dns_hook > signed.crt
             ===================
 
             ===Example Crontab Renewal (once per month)===
-            0 0 1 * * python /path/to/acme_tiny.py --account-key /path/to/account.key --csr /path/to/domain.csr --acme-dir /usr/share/nginx/html/.well-known/acme-challenge/ > /path/to/signed.crt 2>> /var/log/acme_tiny.log
+            0 0 1 * * python /path/to/acme_tiny.py --account-key /path/to/account.key --csr /path/to/domain.csr --dns-hook /path/to/nsupdate_dns_hook > /path/to/signed.crt 2>> /var/log/acme_tiny.log
             ==============================================
             """)
     )
     parser.add_argument("--account-key", required=True, help="path to your Let's Encrypt account private key")
     parser.add_argument("--csr", required=True, help="path to your certificate signing request")
-    parser.add_argument("--acme-dir", required=True, help="path to the .well-known/acme-challenge/ directory")
+    parser.add_argument("--dns-hook", required=True, help="path to DNS hook")
     parser.add_argument("--quiet", action="store_const", const=logging.ERROR, help="suppress output except for errors")
     parser.add_argument("--ca", default=DEFAULT_CA, help="certificate authority, default is Let's Encrypt")
 
     args = parser.parse_args(argv)
     LOGGER.setLevel(args.quiet or LOGGER.level)
-    signed_crt = get_crt(args.account_key, args.csr, args.acme_dir, log=LOGGER, CA=args.ca)
+    signed_crt = get_crt(args.account_key, args.csr, args.dns_hook, log=LOGGER, CA=args.ca)
     sys.stdout.write(signed_crt)
 
 if __name__ == "__main__": # pragma: no cover

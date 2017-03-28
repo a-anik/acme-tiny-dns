@@ -1,0 +1,29 @@
+#!/bin/sh
+
+set -e
+
+KEYFILE="$(dirname $0)/my-tsig.key"
+NSUPDATE="nsupdate -k $KEYFILE"
+SERVER=localhost
+TTL=60
+
+if [ $# -lt 2 ]; then
+    echo "Usage: $0 setup|teardown <domain> [args...]" >&2
+    exit 1
+fi
+
+case "$1" in
+    setup)
+        DOMAIN="$2"
+        KEYAUTH="$3"
+        printf "server %s\nupdate delete _acme-challenge.%s. TXT\nupdate add _acme-challenge.%s. %d TXT \"%s\"\nsend\n" $SERVER $DOMAIN $DOMAIN $TTL $KEYAUTH | $NSUPDATE
+        ;;
+    teardown)
+        DOMAIN="$2"
+        printf "server %s\nupdate delete _acme-challenge.%s. TXT\nsend\n" $SERVER $DOMAIN | $NSUPDATE
+        ;;
+    *)
+        echo "Unknown action: $1" >&2
+        exit 1
+        ;;
+esac

@@ -48,7 +48,7 @@ def get_crt(account_key, csr, dns_hook, log=LOGGER, CA=DEFAULT_CA, disable_check
 
     # helper function - make signed requests
     def _send_signed_request(url, payload, err_msg, depth=0):
-        payload64 = _b64(json.dumps(payload).encode('utf8'))
+        payload64 = "" if payload is None else _b64(json.dumps(payload).encode('utf8'))
         new_nonce = _do_request(directory['newNonce'])[2]['Replay-Nonce']
         protected = {"url": url, "alg": alg, "nonce": new_nonce}
         protected.update({"jwk": jwk} if acct_headers is None else {"kid": acct_headers['Location']})
@@ -63,12 +63,12 @@ def get_crt(account_key, csr, dns_hook, log=LOGGER, CA=DEFAULT_CA, disable_check
 
     # helper function - poll until complete
     def _poll_until_not(url, pending_statuses, err_msg):
-        while True:
-            result, _, _ = _do_request(url, err_msg=err_msg)
-            if result['status'] in pending_statuses:
-                time.sleep(2)
-                continue
-            return result
+        result, t0 = None, time.time()
+        while result is None or result['status'] in pending_statuses:
+            assert (time.time() - t0 < 3600), "Polling timeout" # 1 hour timeout
+            time.sleep(0 if result is None else 2)
+            result, _, _ = _send_signed_request(url, None, err_msg)
+        return result
 
     # parse account key to get public key
     log.info("Parsing account key...")
@@ -93,7 +93,7 @@ def get_crt(account_key, csr, dns_hook, log=LOGGER, CA=DEFAULT_CA, disable_check
     common_name = re.search(r"Subject:.*? CN\s?=\s?([^\s,;/]+)", out.decode('utf8'))
     if common_name is not None:
         domains.add(common_name.group(1))
-    subject_alt_names = re.search(r"X509v3 Subject Alternative Name: \n +([^\n]+)\n", out.decode('utf8'), re.MULTILINE|re.DOTALL)
+    subject_alt_names = re.search(r"X509v3 Subject Alternative Name: (?:critical)?\n +([^\n]+)\n", out.decode('utf8'), re.MULTILINE|re.DOTALL)
     if subject_alt_names is not None:
         for san in subject_alt_names.group(1).split(", "):
             if san.startswith("DNS:"):
@@ -123,7 +123,7 @@ def get_crt(account_key, csr, dns_hook, log=LOGGER, CA=DEFAULT_CA, disable_check
 
     # get the authorizations that need to be completed
     for auth_url in order['authorizations']:
-        authorization, _, _ = _do_request(auth_url, err_msg="Error getting challenges")
+        authorization, _, _ = _send_signed_request(auth_url, None, "Error getting challenges")
         domain = authorization['identifier']['value']
         log.info("Verifying {0}...".format(domain))
 
@@ -158,7 +158,7 @@ def get_crt(account_key, csr, dns_hook, log=LOGGER, CA=DEFAULT_CA, disable_check
         raise ValueError("Order failed: {0}".format(order))
 
     # download the certificate
-    certificate_pem, _, _ = _do_request(order['certificate'], err_msg="Certificate download failed")
+    certificate_pem, _, _ = _send_signed_request(order['certificate'], None, "Certificate download failed")
     log.info("Certificate signed!")
     return certificate_pem
 

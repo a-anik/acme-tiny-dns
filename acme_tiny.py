@@ -5,6 +5,7 @@ try:
     from urllib.request import urlopen, Request # Python 3
 except ImportError:
     from urllib2 import urlopen, Request # Python 2
+    input = raw_input
 
 DEFAULT_CA = "https://acme-v02.api.letsencrypt.org" # DEPRECATED! USE DEFAULT_DIRECTORY_URL INSTEAD
 DEFAULT_DIRECTORY_URL = "https://acme-v02.api.letsencrypt.org/directory"
@@ -13,7 +14,7 @@ LOGGER = logging.getLogger(__name__)
 LOGGER.addHandler(logging.StreamHandler())
 LOGGER.setLevel(logging.INFO)
 
-def get_crt(account_key, csr, dns_hook, log=LOGGER, CA=DEFAULT_CA, disable_check=False, directory_url=DEFAULT_DIRECTORY_URL, contact=None):
+def get_crt(account_key, csr, dns_hook, dns_delay, log=LOGGER, CA=DEFAULT_CA, disable_check=False, directory_url=DEFAULT_DIRECTORY_URL, contact=None):
     directory, acct_headers, alg, jwk = None, None, None, None # global variables
 
     # helper functions - base64 encode for jose spec
@@ -135,6 +136,13 @@ def get_crt(account_key, csr, dns_hook, log=LOGGER, CA=DEFAULT_CA, disable_check
 
         # update dns
         _cmd([dns_hook, "setup", domain, record], err_msg="dns_hook Error")
+        log.info("DNS record created.")
+        if dns_delay >= 0:
+            log.info("Waiting for {} min for DNS to settle...".format(dns_delay))
+            time.sleep(dns_delay * 60)
+        else:
+            log.info('Press Enter to continue after DNS propagation is complete...')
+            input()
 
         # TODO check dns
 
@@ -180,6 +188,7 @@ def main(argv=None):
     parser.add_argument("--account-key", required=True, help="path to your Let's Encrypt account private key")
     parser.add_argument("--csr", required=True, help="path to your certificate signing request")
     parser.add_argument("--dns-hook", required=True, help="path to DNS hook")
+    parser.add_argument("--dns-delay", type=int, default=20, help="waiting time in minutes for DNS update (default is 20), if < 0 - wait for user input")
     parser.add_argument("--quiet", action="store_const", const=logging.ERROR, help="suppress output except for errors")
     parser.add_argument("--disable-check", default=False, action="store_true", help="disable checking if the challenge file is hosted correctly before telling the CA")
     parser.add_argument("--directory-url", default=DEFAULT_DIRECTORY_URL, help="certificate authority directory url, default is Let's Encrypt")
@@ -188,7 +197,7 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
     LOGGER.setLevel(args.quiet or LOGGER.level)
-    signed_crt = get_crt(args.account_key, args.csr, args.dns_hook, log=LOGGER, CA=args.ca, disable_check=args.disable_check, directory_url=args.directory_url, contact=args.contact)
+    signed_crt = get_crt(args.account_key, args.csr, args.dns_hook, args.dns_delay, log=LOGGER, CA=args.ca, disable_check=args.disable_check, directory_url=args.directory_url, contact=args.contact)
     sys.stdout.write(signed_crt)
 
 if __name__ == "__main__": # pragma: no cover

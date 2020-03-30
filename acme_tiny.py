@@ -136,9 +136,9 @@ def get_crt(account_key, csr, dns_hook, dns_delay, log=LOGGER, CA=DEFAULT_CA, di
 
         # update dns
         _cmd([dns_hook, "setup", domain, record], err_msg="dns_hook Error")
-        log.info("DNS record created.")
+        log.info("DNS record created: _acme-challenge.{0}. IN TXT {1}".format(domain, record))
         if dns_delay >= 0:
-            log.info("Waiting for {} min for DNS to settle...".format(dns_delay))
+            log.info("Waiting for {0} min for DNS to settle...".format(dns_delay))
             time.sleep(dns_delay * 60)
         else:
             log.info('Press Enter to continue after DNS propagation is complete...')
